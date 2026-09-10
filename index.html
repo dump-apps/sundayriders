@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ride Vietnam — OSM Route Builder</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+  :root{
+    --ink:#1c2430;
+    --muted:#5b6b7c;
+    --grad:linear-gradient(135deg,#ff7a18 0%,#ff2d78 52%,#7b2ff7 100%);
+    --panel:rgba(255,255,255,.92);
+    --shadow:0 14px 44px rgba(10,20,40,.22);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:'Poppins','Segoe UI',system-ui,sans-serif;color:var(--ink);overflow:hidden}
+  #map{position:absolute;inset:0;background:#cfe8f3}
+
+  /* ---------- Floating glass panel (animates open/closed) ---------- */
+  .panel{position:absolute;z-index:1000;top:14px;left:14px;width:342px;max-height:calc(100% - 28px);
+    display:flex;flex-direction:column;background:var(--panel);
+    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border-radius:22px;box-shadow:var(--shadow);overflow:hidden;border:1px solid rgba(255,255,255,.65);
+    transition:transform .38s cubic-bezier(.4,0,.2,1), opacity .3s}
+  body.menu-closed .panel{transform:translateX(-118%);opacity:.35;pointer-events:none}
+
+  .panel-head{position:relative;padding:16px 48px 14px 18px;background:var(--grad);color:#fff}
+  .panel-head h1{margin:0;font-size:20px;font-weight:700;letter-spacing:.3px;display:flex;align-items:center;gap:8px}
+  .panel-head p{margin:4px 0 0;font-size:11.5px;opacity:.92}
+  .panel-close{position:absolute;top:12px;right:12px;width:30px;height:30px;border:none;border-radius:50%;
+    background:rgba(255,255,255,.22);color:#fff;font-size:15px;cursor:pointer;transition:.15s;
+    display:grid;place-items:center;line-height:1}
+  .panel-close:hover{background:rgba(255,255,255,.4);transform:scale(1.1)}
+  .panel-body{padding:14px;overflow:auto;flex:1}
+  .panel-foot{padding:8px 14px;font-size:10.5px;color:var(--muted);border-top:1px solid rgba(0,0,0,.06)}
+
+  /* ---------- Floating "show menu" button ---------- */
+  #menuBtn{position:absolute;z-index:1200;top:14px;left:14px;display:flex;align-items:center;gap:9px;
+    border:none;border-radius:14px;padding:11px 16px;background:var(--grad);color:#fff;font-family:inherit;
+    font-size:13px;font-weight:600;cursor:pointer;box-shadow:var(--shadow);
+    opacity:0;pointer-events:none;transform:translateX(-16px);transition:.38s cubic-bezier(.4,0,.2,1)}
+  #menuBtn .ico{font-size:17px}
+  #menuBtn:hover{transform:translateY(-2px)}
+  body.menu-closed #menuBtn{opacity:1;pointer-events:auto;transform:none}
+  body.menu-closed #menuBtn:hover{transform:translateY(-2px)}
+
+  /* ---------- Toolbar ---------- */
+  .toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+  .btn{border:none;border-radius:12px;padding:10px 12px;font-family:inherit;font-size:13px;font-weight:600;
+    cursor:pointer;transition:transform .15s, box-shadow .15s, filter .15s}
+  .btn:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(20,40,80,.18)}
+  .btn:active{transform:translateY(0)}
+  .btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+  .btn-primary{background:var(--grad);color:#fff}
+  .btn-ghost{background:#fff;border:1.5px solid #e2e8f0;color:#3c4a5a}
+  .btn.active{box-shadow:0 0 0 3px rgba(255,45,120,.35), 0 8px 18px rgba(20,40,80,.18)}
+
+  /* ---------- Route cards ---------- */
+  .empty{font-size:12.5px;color:var(--muted);text-align:center;padding:14px 6px}
+  .route-card{position:relative;background:#fff;border:1.5px solid #e6ebf2;border-radius:14px;
+    padding:10px 12px 10px 16px;margin-bottom:10px;cursor:pointer;overflow:hidden;
+    transition:transform .18s, box-shadow .18s, border-color .18s}
+  .route-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--c)}
+  .route-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(20,40,80,.12)}
+  .route-card.active{border-color:var(--c);box-shadow:0 10px 26px rgba(20,40,80,.16)}
+  .rc-top{display:flex;align-items:center;gap:8px}
+  .swatch{width:11px;height:11px;border-radius:50%;flex:none}
+  .rc-name{flex:1;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text}
+  .rc-meta{font-size:11px;color:var(--muted);margin-top:3px}
+  .rc-status{font-size:11px;color:#ff2d78;margin-top:3px;font-weight:500;min-height:0}
+  .stops{margin-top:10px;border-top:1px dashed #d8e0ea;padding-top:8px}
+  .hint{font-size:11.5px;color:var(--muted);font-style:italic}
+  .stop-row{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:10px;font-size:12.5px}
+  .stop-row:hover{background:#f2f6fb}
+  .stop-num{width:22px;height:22px;border-radius:50%;color:#fff;display:grid;place-items:center;
+    font-size:11px;font-weight:700;flex:none}
+  .stop-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text}
+  .icon-btn{border:none;background:transparent;cursor:pointer;font-size:13px;color:#8a97a6;
+    padding:2px 5px;border-radius:6px;line-height:1;transition:background .15s,color .15s}
+  .icon-btn:hover:not(:disabled){background:#e8eef6;color:var(--ink)}
+  .icon-btn:disabled{opacity:.3;cursor:default}
+
+  /* ---------- Per-waypoint color swatch (native color input) ---------- */
+  .stop-color{display:inline-flex;flex:none;cursor:pointer}
+  .stop-color input{appearance:none;-webkit-appearance:none;width:19px;height:19px;border:none;
+    border-radius:50%;padding:0;background:none;cursor:pointer}
+  .stop-color input::-webkit-color-swatch-wrapper{padding:0}
+  .stop-color input::-webkit-color-swatch{border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+  .stop-color input::-moz-color-swatch{border:2px solid #fff;border-radius:50%}
+
+  /* ---------- Inline name edit ---------- */
+  .inline-edit{flex:1;min-width:0;font-family:inherit;font-size:12.5px;padding:3px 7px;
+    border:1.5px solid #ffb14e;border-radius:8px;outline:none;color:var(--ink)}
+
+  /* ---------- Destination photo pins ---------- */
+  .dest-icon{background:none;border:none}
+  .dest-pin{position:relative;width:60px;height:60px;transition:transform .2s}
+  .dest-pin:hover{transform:scale(1.1)}
+  .dest-pin img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;
+    border:3px solid #fff;box-shadow:0 6px 16px rgba(0,0,0,.35)}
+  .dest-label{position:absolute;top:63px;left:50%;transform:translateX(-50%);
+    background:rgba(255,255,255,.94);padding:2px 9px;border-radius:999px;font-size:10px;font-weight:600;
+    white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.28);color:#22303e}
+
+  /* ---------- Stop pins ---------- */
+  .stop-icon{background:none;border:none}
+  .stop-pin{width:30px;height:30px;border-radius:50%;color:#fff;display:grid;place-items:center;
+    font-weight:700;font-size:13px;border:2.5px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,.35);
+    transition:transform .15s}
+  .stop-pin:hover{transform:scale(1.18)}
+
+  /* ---------- Dotted route line (animated) ---------- */
+  .route-dots{animation:dash 1.1s linear infinite}
+  @keyframes dash{to{stroke-dashoffset:-25}}
+
+  /* ---------- Add-stop banner ---------- */
+  .add-banner{position:absolute;z-index:1100;top:16px;left:50%;transform:translateX(-50%);
+    background:rgba(28,36,48,.93);color:#fff;padding:10px 20px;border-radius:999px;font-size:13px;
+    display:none;align-items:center;gap:10px;box-shadow:var(--shadow)}
+  .add-banner .dot{width:9px;height:9px;border-radius:50%;background:#ff2d78;animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.3}}
+  body.add-mode .add-banner{display:flex}
+  body.add-mode #map{cursor:crosshair}
+
+  /* ---------- Basemap switcher ---------- */
+  .basemap{position:absolute;z-index:1000;right:14px;bottom:26px;display:flex;gap:5px;
+    background:rgba(255,255,255,.92);backdrop-filter:blur(10px);padding:6px;border-radius:14px;box-shadow:var(--shadow)}
+  .basemap button{border:none;background:transparent;padding:6px 11px;border-radius:9px;cursor:pointer;
+    font-family:inherit;font-size:11.5px;font-weight:600;color:#41505f;transition:.15s}
+  .basemap button.on{background:var(--grad);color:#fff}
+
+  /* ---------- Toast ---------- */
+  .toast{position:absolute;z-index:1200;bottom:28px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:#1c2430;color:#fff;padding:10px 20px;border-radius:999px;font-size:13px;
+    opacity:0;pointer-events:none;transition:.3s;box-shadow:var(--shadow)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .btn-mini{margin-top:8px;border:none;background:var(--grad);color:#fff;font-family:inherit;
+    font-size:11.5px;font-weight:600;padding:6px 12px;border-radius:8px;cursor:pointer}
+  .btn-mini.alt{background:#1c2430}
+  .pop-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;
+    border:1.5px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.2)}
+
+  @media(max-width:640px){
+    .panel{width:calc(100% - 28px);max-height:54vh}
+    .dest-pin{width:46px;height:46px}
+    .dest-label{top:49px;font-size:9px}
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<button id="menuBtn" title="Show menu"><span class="ico">☰</span> Menu</button>
+
+<div class="add-banner"><span class="dot"></span> Add-stop mode: click the map (or a photo pin) to drop a stop · <b>Esc</b> to finish</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h1>🚴 Ride Vietnam</h1>
+    <p>OpenStreetMap + OSRM route builder</p>
+    <button class="panel-close" id="closePanel" title="Hide panel">⟨</button>
+  </div>
+  <div class="panel-body">
+    <div class="toolbar">
+      <button class="btn btn-primary" id="btnNew">＋ New Route</button>
+      <button class="btn btn-ghost" id="btnAdd" disabled>＋ Add Stops</button>
+      <button class="btn btn-ghost" id="btnFit" disabled>⤢ Fit to Route</button>
+      <button class="btn btn-ghost" id="btnClear" disabled>✕ Clear Stops</button>
+    </div>
+    <div id="routeList"></div>
+  </div>
+  <div class="panel-foot">Map data © OpenStreetMap · Routing © OSRM (demo server — swap <code>OSRM_BASE</code> to a bike-profile instance for cycling routes)</div>
+</div>
+
+<div class="basemap" id="basemap"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ============================================================
+   CONFIG
+============================================================ */
+// OSRM demo server (car profile). For true cycling routes, run your own
+// OSRM with the bike profile and point this at it, e.g.:
+// const OSRM_BASE = 'https://your-osrm-server.example/route/v1/bike/';
+const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving/';
+const STORE_KEY = 'vn-ride-routes-v2';
+
+const PALETTE = ['#ff5e5b','#00a6fb','#f9c80e','#00c292','#f060aa','#7b2ff7','#ff9f1c'];
+
+// Destinations mirror the infographic; swap the picsum URLs for your real photos.
+const DESTINATIONS = [
+  {id:'hanoi',    name:'Ha Noi',         lat:21.0285, lon:105.8542, img:'https://picsum.photos/seed/vn-hanoi/160/160'},
+  {id:'sapa',     name:'Sapa',           lat:22.3379, lon:103.8416, img:'https://picsum.photos/seed/vn-sapa/160/160'},
+  {id:'halong',   name:'Ha Long Bay',    lat:20.9055, lon:107.1830, img:'https://picsum.photos/seed/vn-halong/160/160'},
+  {id:'ninhbinh', name:'Ninh Binh',      lat:20.2450, lon:105.9367, img:'https://picsum.photos/seed/vn-ninhbinh/160/160'},
+  {id:'hue',      name:'Hue',            lat:16.4638, lon:107.6091, img:'https://picsum.photos/seed/vn-hue/160/160'},
+  {id:'danang',   name:'Da Nang',        lat:16.0544, lon:108.2022, img:'https://picsum.photos/seed/vn-danang/160/160'},
+  {id:'nhatrang', name:'Nha Trang',      lat:12.2388, lon:109.1940, img:'https://picsum.photos/seed/vn-nhatrang/160/160'},
+  {id:'muine',    name:'Mui Ne',         lat:10.9356, lon:108.2006, img:'https://picsum.photos/seed/vn-muine/160/160'},
+  {id:'mekong',   name:'Mekong Delta',   lat:10.0353, lon:105.7840, img:'https://picsum.photos/seed/vn-mekong/160/160'},
+  {id:'hcm',      name:'Ho Chi Minh City',lat:10.8231,lon:106.6297, img:'https://picsum.photos/seed/vn-saigon/160/160'},
+];
+
+const TILES = {
+  OSM:     {url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',            attr:'© OpenStreetMap contributors'},
+  Voyager: {url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attr:'© CARTO © OpenStreetMap'},
+  Dark:    {url:'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',           attr:'© CARTO © OpenStreetMap'},
+};
+
+/* ============================================================
+   STATE
+============================================================ */
+let map, currentBase = null;
+let routes = [];            // {id,name,color,stops:[{lat,lon,name,color?}]}
+let activeId = null;
+let addMode = false;
+const lineLayers = {};      // routeId -> L.layerGroup (dotted route)
+const stopLayer  = L.layerGroup();
+const osrmCache  = {};      // routeId -> {key,data}
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const stopColor = (s, r) => s.color || r.color;   // waypoint color falls back to route color
+
+/* ============================================================
+   MAP SETUP
+============================================================ */
+function initMap(){
+  map = L.map('map', {zoomControl:false}).setView([15.9, 106.8], 6);
+  L.control.zoom({position:'bottomright'}).addTo(map);
+
+  const bm = $('#basemap');
+  Object.entries(TILES).forEach(([name, t], i) => {
+    const layer = L.tileLayer(t.url, {attribution:t.attr, maxZoom:19});
+    if(i === 0){ layer.addTo(map); currentBase = layer; }
+    const b = document.createElement('button');
+    b.textContent = name;
+    if(i === 0) b.classList.add('on');
+    b.onclick = () => {
+      if(currentBase) map.removeLayer(currentBase);
+      layer.addTo(map); currentBase = layer;
+      bm.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+    };
+    bm.appendChild(b);
+  });
+
+  stopLayer.addTo(map);
+  map.on('click', e => {
+    if(!addMode) return;
+    if(activeId) addStop(e.latlng.lat, e.latlng.lng);
+    else toast('Select or create a route first');
+  });
+
+  DESTINATIONS.forEach(d => {
+    const icon = L.divIcon({
+      className:'dest-icon',
+      html:`<div class="dest-pin"><img src="${d.img}" alt="${esc(d.name)}"><span class="dest-label">${esc(d.name)}</span></div>`,
+      iconSize:[60, 92], iconAnchor:[30, 30]
+    });
+    L.marker([d.lat, d.lon], {icon, riseOnHover:true})
+      .bindTooltip(d.name, {direction:'top', offset:[0,-34]})
+      .on('click', () => {
+        if(addMode && activeId){ addStop(d.lat, d.lon, d.name); }
+        else if(activeId){ toast('Tip: turn on “Add Stops”, then click places to build your route'); }
+      })
+      .addTo(map);
+  });
+}
+
+/* ============================================================
+   OSRM ROUTING
+============================================================ */
+async function fetchOSRM(route){
+  const pts = route.stops.map(s => `${s.lon},${s.lat}`).join(';');
+  const res = await fetch(`${OSRM_BASE}${pts}?overview=full&geometries=geojson&alternatives=false`);
+  const data = await res.json();
+  if(data.code !== 'Ok' || !data.routes.length) throw new Error(data.code || 'no route');
+  const r = data.routes[0];
+  return {
+    geometry: r.geometry.coordinates.map(c => [c[1], c[0]]),
+    distance: r.distance,
+    duration: r.duration
+  };
+}
+
+function refreshRoute(id, force){
+  const r = routes.find(x => x.id === id);
+  if(!r) return;
+  let g = lineLayers[id];
+  if(!g){ g = L.layerGroup().addTo(map); lineLayers[id] = g; }
+  g.clearLayers();
+
+  if(r.stops.length < 2){ setStatus(id, r.stops.length === 1 ? 'Add one more stop to see the route' : ''); return; }
+
+  const key = r.stops.map(s => s.lat.toFixed(5)+','+s.lon.toFixed(5)).join(';');
+  if(osrmCache[id] && osrmCache[id].key === key && !force){
+    drawLine(r, osrmCache[id].data, id);
+    return;
+  }
+  setStatus(id, 'Calculating fastest route…');
+  fetchOSRM(r)
+    .then(data => {
+      osrmCache[id] = {key, data};
+      drawLine(r, data, id);
+      renderRouteList();
+      setStatus(id, '');
+    })
+    .catch(() => {
+      drawLine(r, {geometry:r.stops.map(s => [s.lat, s.lon]), distance:null, duration:null}, id);
+      renderRouteList();
+      setStatus(id, '');
+      toast('Routing unavailable — showing straight lines');
+    });
+}
+
+function drawLine(r, data, id){
+  const isTop = id === activeId;
+  lineLayers[id].addLayer(
+    L.polyline(data.geometry, {color:r.color, weight:10, opacity:.16, interactive:false}) // soft glow
+  );
+  lineLayers[id].addLayer(
+    L.polyline(data.geometry, {
+      color:r.color, weight:4.5, opacity: isTop ? 1 : .55,
+      dashArray:'0.1 12.4', lineCap:'round',
+      className: isTop ? 'route-dots' : ''
+    })
+  );
+}
+
+/* ============================================================
+   ROUTE / STOP OPERATIONS
+============================================================ */
+function createRoute(){
+  const r = {id:uid(), name:`Route ${routes.length + 1}`,
+             color:PALETTE[routes.length % PALETTE.length], stops:[]};
+  routes.push(r);
+  save(); selectRoute(r.id); setAddMode(true);
+  toast('New route created — click the map to add stops');
+}
+function deleteRoute(id){
+  if(!confirm('Delete this route?')) return;
+  routes = routes.filter(x => x.id !== id);
+  if(lineLayers[id]){ lineLayers[id].clearLayers(); lineLayers[id].remove(); delete lineLayers[id]; }
+  delete osrmCache[id];
+  if(activeId === id) activeId = routes.length ? routes[0].id : null;
+  save(); renderAll();
+}
+function renameRoute(id){
+  const r = routes.find(x => x.id === id); if(!r) return;
+  const n = prompt('Route name:', r.name);
+  if(n && n.trim()){ r.name = n.trim(); save(); renderRouteList(); }
+}
+function selectRoute(id){
+  activeId = id; save();
+  renderRouteList(); redrawStops();
+  const r = routes.find(x => x.id === id);
+  if(r && r.stops.length >= 2) fitToRoute(id);
+  $('#btnAdd').disabled = false; $('#btnFit').disabled = false; $('#btnClear').disabled = false;
+}
+function fitToRoute(id){
+  const r = routes.find(x => x.id === id);
+  if(!r || r.stops.length < 2) return;
+  map.fitBounds(L.latLngBounds(r.stops.map(s => [s.lat, s.lon])).pad(0.25), {maxZoom:9});
+}
+function addStop(lat, lon, name){
+  const r = routes.find(x => x.id === activeId); if(!r) return;
+  r.stops.push({lat, lon, name: name || `Waypoint ${r.stops.length + 1}`, color: r.color});
+  save(); refreshRoute(r.id, true); redrawStops(); renderRouteList();
+}
+function removeStop(id, i){
+  const r = routes.find(x => x.id === id); if(!r) return;
+  r.stops.splice(i, 1);
+  save(); refreshRoute(r.id, true); redrawStops(); renderRouteList();
+}
+function moveStop(id, i, dir){
+  const r = routes.find(x => x.id === id); if(!r) return;
+  const j = i + dir;
+  if(j < 0 || j >= r.stops.length) return;
+  [r.stops[i], r.stops[j]] = [r.stops[j], r.stops[i]];
+  save(); refreshRoute(r.id, true); redrawStops(); renderRouteList();
+}
+function setStopName(id, i, name){
+  const r = routes.find(x => x.id === id); if(!r || !name) return;
+  r.stops[i].name = name; save(); redrawStops(); renderRouteList();
+}
+function setStopColor(id, i, color){
+  const r = routes.find(x => x.id === id); if(!r) return;
+  r.stops[i].color = color; save(); redrawStops(); // no list re-render (would kill the open picker)
+}
+function setAddMode(on){
+  if(on && !activeId){ toast('Select or create a route first'); return; }
+  addMode = on;
+  document.body.classList.toggle('add-mode', on);
+  const b = $('#btnAdd');
+  b.classList.toggle('active', on);
+  b.textContent = on ? '✓ Stop Adding' : '＋ Add Stops';
+}
+
+/* ============================================================
+   RENDERING
+============================================================ */
+function redrawStops(){
+  stopLayer.clearLayers();
+  const r = routes.find(x => x.id === activeId);
+  if(!r) return;
+  r.stops.forEach((s, i) => {
+    const sc = stopColor(s, r);
+    const role = i === 0 ? 'Start' : i === r.stops.length - 1 ? 'Finish' : '';
+    const m = L.marker([s.lat, s.lon], {
+      zIndexOffset: 1000,
+      icon: L.divIcon({className:'stop-icon', iconSize:[30,30], iconAnchor:[15,15],
+        html:`<div class="stop-pin" style="background:${sc}" title="${role}">${i+1}</div>`})
+    });
+    m.bindPopup(`<div style="font-family:Poppins,sans-serif">
+        <span class="pop-dot" style="background:${sc}"></span><b>${i+1}. ${esc(s.name)}</b>
+        <br><span style="color:#8a97a6;font-size:11px">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</span>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn-mini" data-rnmpop="${i}">Rename</button>
+          <button class="btn-mini alt" data-rmpop="${i}">Remove</button>
+        </div>
+      </div>`);
+    stopLayer.addLayer(m);
+  });
+}
+
+function fmtMeta(r){
+  const c = osrmCache[r.id];
+  if(!c || !c.data.distance) return '—';
+  const km = Math.round(c.data.distance / 1000);
+  const h = Math.floor(c.data.duration / 3600), m = Math.round((c.data.duration % 3600) / 60);
+  return `${km} km · ${h}h ${String(m).padStart(2,'0')}m`;
+}
+
+function renderRouteList(){
+  const el = $('#routeList');
+  if(!routes.length){
+    el.innerHTML = '<p class="empty">No routes yet.<br>Click <b>＋ New Route</b> to start planning.</p>';
+    return;
+  }
+  el.innerHTML = routes.map(r => {
+    const active = r.id === activeId;
+    let stopsHtml = '';
+    if(active){
+      stopsHtml = r.stops.length
+        ? `<div class="stops">${r.stops.map((s,i) => `
+            <div class="stop-row">
+              <label class="stop-color" title="Waypoint color">
+                <input type="color" value="${stopColor(s,r)}" data-scolor="${r.id}:${i}">
+              </label>
+              <span class="stop-num" style="background:${stopColor(s,r)}">${i+1}</span>
+              <span class="stop-name" data-sname="${r.id}:${i}" title="Click to rename">${esc(s.name)}</span>
+              <button class="icon-btn" data-up="${i}" ${i===0?'disabled':''} title="Move up">↑</button>
+              <button class="icon-btn" data-down="${i}" ${i===r.stops.length-1?'disabled':''} title="Move down">↓</button>
+              <button class="icon-btn" data-rm="${i}" title="Remove stop">✕</button>
+            </div>`).join('')}</div>`
+        : `<div class="stops"><span class="hint">No stops yet — hit “Add Stops” and click the map.</span></div>`;
+    }
+    return `
+    <div class="route-card ${active?'active':''}" style="--c:${r.color}" data-card="${r.id}">
+      <div class="rc-top" data-select="${r.id}">
+        <span class="swatch" style="background:${r.color}"></span>
+        <span class="rc-name" data-rename="${r.id}" title="Click to rename">${esc(r.name)}</span>
+        <button class="icon-btn" data-del="${r.id}" title="Delete route">🗑</button>
+      </div>
+      <div class="rc-meta">${r.stops.length} stop${r.stops.length===1?'':'s'} · ${fmtMeta(r)}</div>
+      ${active ? '<div class="rc-status" id="routeStatus"></div>' : ''}
+      ${stopsHtml}
+    </div>`;
+  }).join('');
+}
+
+function setStatus(id, msg){
+  if(id !== activeId) return;
+  const el = $('#routeStatus');
+  if(el) el.textContent = msg;
+}
+
+function renderAll(){
+  routes.forEach(r => { if(lineLayers[r.id]){ lineLayers[r.id].clearLayers(); } delete osrmCache[r.id]; });
+  Object.keys(lineLayers).forEach(id => {
+    if(!routes.find(r => r.id === id)){ lineLayers[id].remove(); delete lineLayers[id]; }
+  });
+  routes.forEach(r => refreshRoute(r.id, false));
+  redrawStops();
+  renderRouteList();
+  const has = !!activeId && routes.find(r => r.id === activeId);
+  $('#btnAdd').disabled = !has; $('#btnFit').disabled = !has; $('#btnClear').disabled = !has;
+}
+
+/* ============================================================
+   INLINE WAYPOINT RENAME (sidebar)
+============================================================ */
+function beginRenameStop(routeId, i, spanEl){
+  const r = routes.find(x => x.id === routeId); const s = r && r.stops[i];
+  if(!s || !spanEl) return;
+  const input = document.createElement('input');
+  input.className = 'inline-edit';
+  input.value = s.name;
+  spanEl.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const commit = ok => {
+    if(done) return; done = true;
+    const v = input.value.trim();
+    if(ok && v){ s.name = v; save(); }
+    renderRouteList(); // restore the span (save only applied when valid)
+  };
+  input.addEventListener('blur', () => commit(true));
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if(e.key === 'Enter') commit(true);
+    else if(e.key === 'Escape') commit(false);
+  });
+}
+
+/* ============================================================
+   PERSISTENCE
+============================================================ */
+function save(){ localStorage.setItem(STORE_KEY, JSON.stringify({routes, activeId})); }
+function load(){
+  try{
+    const d = JSON.parse(localStorage.getItem(STORE_KEY));
+    if(d){ routes = d.routes || []; activeId = d.activeId || null; }
+  }catch(e){}
+}
+function seedDefault(){
+  const d = id => DESTINATIONS.find(x => x.id === id);
+  routes.push({
+    id: uid(), name:'Central Coast Classic', color: PALETTE[0],
+    stops:['hanoi','ninhbinh','hue','danang'].map(id =>
+      ({lat:d(id).lat, lon:d(id).lon, name:d(id).name, color:PALETTE[0]}))
+  });
+  activeId = routes[0].id;
+}
+
+/* ============================================================
+   UI WIRING
+============================================================ */
+function toast(msg){
+  const t = $('#toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function wireUI(){
+  // Panel show / hide
+  $('#closePanel').onclick = () => document.body.classList.add('menu-closed');
+  $('#menuBtn').onclick    = () => document.body.classList.remove('menu-closed');
+
+  $('#btnNew').onclick  = createRoute;
+  $('#btnAdd').onclick  = () => setAddMode(!addMode);
+  $('#btnFit').onclick  = () => activeId && fitToRoute(activeId);
+  $('#btnClear').onclick = () => {
+    const r = routes.find(x => x.id === activeId);
+    if(r && r.stops.length && confirm('Remove all stops from this route?')){
+      r.stops = []; save(); refreshRoute(r.id, true); redrawStops(); renderRouteList();
+    }
+  };
+  document.addEventListener('keydown', e => { if(e.key === 'Escape' && !e.target.classList.contains('inline-edit')) setAddMode(false); });
+
+  // Route list: select / delete / rename-route / reorder / remove
+  $('#routeList').addEventListener('click', e => {
+    const t = e.target.closest('[data-del],[data-rename],[data-up],[data-down],[data-rm],[data-select]');
+    if(!t) return;
+    const id = t.closest('[data-card]').dataset.card;
+    if(t.dataset.del     !== undefined){ deleteRoute(id); }
+    else if(t.dataset.rename !== undefined){ e.stopPropagation(); renameRoute(id); }
+    else if(t.dataset.up   !== undefined){ moveStop(id, +t.dataset.up, -1); }
+    else if(t.dataset.down !== undefined){ moveStop(id, +t.dataset.down, 1); }
+    else if(t.dataset.rm   !== undefined){ removeStop(id, +t.dataset.rm); }
+    else if(t.dataset.select !== undefined){ selectRoute(id); }
+  });
+
+  // Waypoint inline rename (click the name)
+  $('#routeList').addEventListener('click', e => {
+    const s = e.target.closest('.stop-name[data-sname]');
+    if(!s) return;
+    e.stopPropagation();
+    const [rid, i] = s.dataset.sname.split(':');
+    beginRenameStop(rid, +i, s);
+  });
+
+  // Waypoint color (live, while dragging the picker)
+  $('#routeList').addEventListener('input', e => {
+    if(!e.target.matches('.stop-color input')) return;
+    const [rid, i] = e.target.dataset.scolor.split(':');
+    setStopColor(rid, +i, e.target.value);
+  });
+
+  // Popup buttons (Rename / Remove)
+  document.addEventListener('click', e => {
+    const rm = e.target.closest('.btn-mini[data-rmpop]');
+    if(rm && activeId){ removeStop(activeId, +rm.dataset.rmpop); map.closePopup(); return; }
+    const rn = e.target.closest('.btn-mini[data-rnmpop]');
+    if(rn && activeId){
+      const r = routes.find(x => x.id === activeId); const s = r.stops[+rn.dataset.rnmpop];
+      const n = prompt('Waypoint name:', s.name);
+      if(n && n.trim()){ setStopName(activeId, +rn.dataset.rnmpop, n.trim()); map.closePopup(); }
+    }
+  });
+}
+
+/* ============================================================
+   BOOT
+============================================================ */
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  load();
+  if(!routes.length){ seedDefault(); save(); }
+  wireUI();
+  renderAll();
+  if(activeId && routes.find(r => r.id === activeId)) selectRoute(activeId);
+  else renderRouteList();
+});
+</script>
+</body>
+</html>

@@ -51,7 +51,7 @@
   body.menu-closed #menuBtn:hover{transform:translateY(-2px)}
 
   /* ---------- Toolbar ---------- */
-  .toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+  .toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
   .btn{border:none;border-radius:12px;padding:10px 12px;font-family:inherit;font-size:13px;font-weight:600;
     cursor:pointer;transition:transform .15s, box-shadow .15s, filter .15s}
   .btn:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(20,40,80,.18)}
@@ -59,7 +59,17 @@
   .btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
   .btn-primary{background:var(--grad);color:#fff}
   .btn-ghost{background:#fff;border:1.5px solid #e2e8f0;color:#3c4a5a}
+  .btn-ghost.sm{padding:7px 10px;font-size:12px;border-radius:10px}
   .btn.active{box-shadow:0 0 0 3px rgba(255,45,120,.35), 0 8px 18px rgba(20,40,80,.18)}
+
+  /* ---------- Share & Export ---------- */
+  .sharebox{margin-bottom:14px;background:#f6f9fc;border:1px solid #e6ebf2;border-radius:14px;padding:10px}
+  .share-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .btn-link{background:var(--grad);color:#fff;font-family:inherit;font-weight:600;font-size:12.5px;
+    padding:7px 12px;border-radius:10px;cursor:pointer;transition:.15s}
+  .btn-link:hover{transform:translateY(-2px);box-shadow:0 6px 14px rgba(20,40,80,.22)}
+  .share-url{width:100%;margin-top:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;
+    color:var(--muted);background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;outline:none;resize:none}
 
   /* ---------- Route cards ---------- */
   .empty{font-size:12.5px;color:var(--muted);text-align:center;padding:14px 6px}
@@ -175,9 +185,22 @@
       <button class="btn btn-ghost" id="btnFit" disabled>⤢ Fit to Route</button>
       <button class="btn btn-ghost" id="btnClear" disabled>✕ Clear Stops</button>
     </div>
+
+    <div class="sharebox">
+      <div class="share-row">
+        <button class="btn-link" id="btnLink" title="Copy a link that recreates these routes">🔗 Copy link</button>
+        <button class="btn btn-ghost sm" id="btnGpx"  title="Download all routes as GPX">GPX</button>
+        <button class="btn btn-ghost sm" id="btnGeo"  title="Download all routes as GeoJSON">GeoJSON</button>
+        <button class="btn btn-ghost sm" id="btnJson" title="Download your data as JSON">JSON</button>
+        <button class="btn btn-ghost sm" id="btnImport" title="Import a JSON file">⬆ Import</button>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
+      </div>
+      <input id="shareUrl" class="share-url" readonly placeholder="Share link appears here as you build…">
+    </div>
+
     <div id="routeList"></div>
   </div>
-  <div class="panel-foot">Map data © OpenStreetMap · Routing © OSRM (demo server — swap <code>OSRM_BASE</code> to a bike-profile instance for cycling routes)</div>
+  <div class="panel-foot">Map © OpenStreetMap · Routing © OSRM · Share links re-run routing on the recipient's device</div>
 </div>
 
 <div class="basemap" id="basemap"></div>
@@ -212,8 +235,8 @@ const DESTINATIONS = [
 
 const TILES = {
   OSM:     {url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',            attr:'© OpenStreetMap contributors'},
-  Voyager: {url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_34f5_1_69194430090979a0433d5468', attr:'© CARTO © OpenStreetMap'},
-  Dark:    {url:'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_34f5_1_69194430090979a0433d5468',           attr:'© CARTO © OpenStreetMap'},
+  Voyager: {url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attr:'© CARTO © OpenStreetMap'},
+  Dark:    {url:'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',           attr:'© CARTO © OpenStreetMap'},
 };
 
 /* ============================================================
@@ -443,6 +466,7 @@ function fmtMeta(r){
 }
 
 function renderRouteList(){
+  updateShareLink();
   const el = $('#routeList');
   if(!routes.length){
     el.innerHTML = '<p class="empty">No routes yet.<br>Click <b>＋ New Route</b> to start planning.</p>';
@@ -525,13 +549,146 @@ function beginRenameStop(routeId, i, spanEl){
 }
 
 /* ============================================================
+   SHARE & EXPORT
+============================================================ */
+// --- URL encoding (UTF-8 safe, URL-safe base64) ---
+function encodeState(obj){
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+  return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function decodeState(s){
+  let b64 = s.replace(/-/g,'+').replace(/_/g,'/');
+  while(b64.length % 4 !== 0) b64 += '=';
+  return JSON.parse(decodeURIComponent(escape(atob(b64))));
+}
+function basePageUrl(){ return location.href.split('?')[0].split('#')[0]; }
+function buildShareUrl(){ return basePageUrl() + '?r=' + encodeState({routes, activeId}); }
+function updateShareLink(){
+  const inp = $('#shareUrl'); if(!inp) return;
+  inp.value = routes.length ? buildShareUrl() : basePageUrl();
+}
+function copyShareLink(){
+  const url = buildShareUrl();
+  const inp = $('#shareUrl'); inp.value = url; inp.select();
+  const done = () => toast('Share link copied — send it to anyone');
+  const fallback = () => { try{ document.execCommand('copy'); done(); }catch(e){ toast('Copy the link from the field below'); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(done, fallback);
+  } else fallback();
+}
+
+// --- file download helper ---
+function download(filename, text, type){
+  const blob = new Blob([text], {type});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function exportGPX(){
+  if(!routes.length) return toast('Nothing to export yet');
+  const now = new Date().toISOString();
+  let body = '';
+  routes.forEach(r => {
+    r.stops.forEach(s => {
+      body += `<wpt lat="${s.lat}" lon="${s.lon}"><name>${esc(s.name)}</name><desc>Stop · ${esc(r.name)}</desc></wpt>\n`;
+    });
+    if(r.stops.length >= 2){
+      const geo = (osrmCache[r.id] && osrmCache[r.id].data.geometry) || r.stops.map(s => [s.lat, s.lon]);
+      body += `<trk><name>${esc(r.name)}</name><desc>Route · ${r.stops.length} stops</desc><trkseg>\n`;
+      geo.forEach(p => { body += `<trkpt lat="${p[0]}" lon="${p[1]}"></trkpt>\n`; });
+      body += `</trkseg></trk>\n`;
+    }
+  });
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<gpx version="1.1" creator="Ride Vietnam" xmlns="http://www.topografix.com/GPX/1/1">\n`
+    + `<meta><name>Ride Vietnam Routes</name><time>${now}</time></meta>\n${body}</gpx>`;
+  download('ride-vietnam.gpx', gpx, 'application/gpx+xml');
+  toast('GPX exported');
+}
+
+function exportGeoJSON(){
+  if(!routes.length) return toast('Nothing to export yet');
+  const feats = [];
+  routes.forEach(r => {
+    r.stops.forEach((s, i) => feats.push({
+      type:'Feature',
+      properties:{kind:'waypoint', route:r.name, index:i+1, name:s.name, color:stopColor(s,r)},
+      geometry:{type:'Point', coordinates:[s.lon, s.lat]}
+    }));
+    if(r.stops.length >= 2){
+      const geo = (osrmCache[r.id] && osrmCache[r.id].data.geometry) || r.stops.map(s => [s.lat, s.lon]);
+      feats.push({
+        type:'Feature',
+        properties:{kind:'route', name:r.name, color:r.color, stops:r.stops.length},
+        geometry:{type:'LineString', coordinates: geo.map(p => [p[1], p[0]])}
+      });
+    }
+  });
+  download('ride-vietnam.geojson',
+    JSON.stringify({type:'FeatureCollection', features:feats}, null, 2),
+    'application/geo+json');
+  toast('GeoJSON exported');
+}
+
+function exportJSON(){
+  if(!routes.length) return toast('Nothing to export yet');
+  download('ride-vietnam.json', JSON.stringify({routes, activeId}, null, 2), 'application/json');
+  toast('JSON exported');
+}
+
+// --- sanitize untrusted incoming route data ---
+function sanitizeRoutes(rs){
+  return (rs || []).map(r => ({
+    id: (r && r.id) || uid(),
+    name: (r && r.name) || 'Route',
+    color: (r && r.color) || PALETTE[0],
+    stops: ((r && r.stops) || []).map(s => ({
+      lat:+s.lat, lon:+s.lon, name:(s && s.name) || 'Stop', color:(s && s.color) || null
+    })).filter(s => isFinite(s.lat) && isFinite(s.lon))
+  }));
+}
+
+function importJSON(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const d = JSON.parse(reader.result);
+      const rs = Array.isArray(d) ? d : d.routes;
+      if(!Array.isArray(rs) || !rs.length) throw new Error('empty');
+      routes = sanitizeRoutes(rs);
+      activeId = routes[0].id;
+      save(); renderAll(); selectRoute(activeId);
+      toast(`Imported ${routes.length} route(s)`);
+    }catch(e){ toast('Could not read that file'); }
+  };
+  reader.readAsText(file);
+}
+
+// --- load routes from a ?r= share link (one-time seed) ---
+function loadFromUrl(){
+  const r = new URLSearchParams(location.search).get('r');
+  if(!r) return false;
+  try{
+    const d = decodeState(r);
+    const rs = sanitizeRoutes(d.routes);
+    if(!rs.length) return false;
+    routes = rs;
+    activeId = (d.activeId && routes.find(x => x.id === d.activeId)) ? d.activeId : routes[0].id;
+    return true;
+  }catch(e){ return false; }
+}
+
+/* ============================================================
    PERSISTENCE
 ============================================================ */
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify({routes, activeId})); }
 function load(){
   try{
     const d = JSON.parse(localStorage.getItem(STORE_KEY));
-    if(d){ routes = d.routes || []; activeId = d.activeId || null; }
+    if(d){ routes = sanitizeRoutes(d.routes); activeId = d.activeId || null; }
   }catch(e){}
 }
 function seedDefault(){
@@ -558,6 +715,7 @@ function wireUI(){
   $('#closePanel').onclick = () => document.body.classList.add('menu-closed');
   $('#menuBtn').onclick    = () => document.body.classList.remove('menu-closed');
 
+  // Toolbar
   $('#btnNew').onclick  = createRoute;
   $('#btnAdd').onclick  = () => setAddMode(!addMode);
   $('#btnFit').onclick  = () => activeId && fitToRoute(activeId);
@@ -567,6 +725,18 @@ function wireUI(){
       r.stops = []; save(); refreshRoute(r.id, true); redrawStops(); renderRouteList();
     }
   };
+
+  // Share & export
+  $('#btnLink').onclick   = copyShareLink;
+  $('#btnGpx').onclick    = exportGPX;
+  $('#btnGeo').onclick    = exportGeoJSON;
+  $('#btnJson').onclick   = exportJSON;
+  $('#btnImport').onclick = () => $('#importFile').click();
+  $('#importFile').addEventListener('change', e => {
+    const f = e.target.files[0]; if(f) importJSON(f); e.target.value = '';
+  });
+  $('#shareUrl').addEventListener('click', e => e.target.select());
+
   document.addEventListener('keydown', e => { if(e.key === 'Escape' && !e.target.classList.contains('inline-edit')) setAddMode(false); });
 
   // Route list: select / delete / rename-route / reorder / remove
@@ -616,12 +786,18 @@ function wireUI(){
 ============================================================ */
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
-  load();
-  if(!routes.length){ seedDefault(); save(); }
+  const fromUrl = loadFromUrl();
+  if(!fromUrl) load();
+  if(!routes.length) seedDefault();
+  save();
   wireUI();
   renderAll();
   if(activeId && routes.find(r => r.id === activeId)) selectRoute(activeId);
   else renderRouteList();
+  if(fromUrl){
+    try{ history.replaceState(null, '', basePageUrl()); }catch(e){}
+    toast('Loaded shared routes');
+  }
 });
 </script>
 </body>
